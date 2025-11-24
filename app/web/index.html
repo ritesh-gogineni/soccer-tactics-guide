@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8" />
+  <title>Soccer Article Generator</title>
+  <style>
+    body { font-family: sans-serif; max-width: 900px; margin: 0 auto; padding: 20px; }
+    label { display: block; margin-top: 10px; }
+    input, select { width: 100%; padding: 6px; margin-top: 4px; }
+    button { margin-top: 15px; padding: 8px 16px; }
+    #article { white-space: pre-wrap; border: 1px solid #ddd; padding: 10px; margin-top: 20px; min-height: 200px; }
+  </style>
+</head>
+<body>
+  <h1>Soccer Article Generator</h1>
+
+  <label>Article Type</label>
+  <select id="article_type">
+    <option value="match_preview">Match Preview</option>
+    <option value="tactical_analysis">Tactical Analysis</option>
+    <option value="player_profile">Player Profile</option>
+  </select>
+
+  <label>Home Team (for match preview)</label>
+  <input id="home_team" />
+
+  <label>Away Team (for match preview)</label>
+  <input id="away_team" />
+
+  <label>Focus Team (for tactics / player)</label>
+  <input id="team" />
+
+  <label>Player (for player profile)</label>
+  <input id="player" />
+
+  <label>Competition</label>
+  <input id="competition" />
+
+  <label>Angle (for tactical analysis)</label>
+  <input id="angle" placeholder="e.g., High pressing in big games" />
+
+  <label>Tone</label>
+  <select id="tone">
+    <option>Neutral</option>
+    <option>Fan blog</option>
+    <option>Analytics-heavy</option>
+  </select>
+
+  <label>Length (words)</label>
+  <input id="length" type="number" value="800" />
+
+  <button id="generate">Generate Article</button>
+
+  <h2>Output</h2>
+  <div id="article">Your article will appear here...</div>
+
+  <script>
+    document.getElementById('generate').onclick = async () => {
+      const payload = {
+        article_type: document.getElementById('article_type').value,
+        home_team: document.getElementById('home_team').value || null,
+        away_team: document.getElementById('away_team').value || null,
+        team: document.getElementById('team').value || null,
+        player: document.getElementById('player').value || null,
+        competition: document.getElementById('competition').value || null,
+        angle: document.getElementById('angle').value || null,
+        tone: document.getElementById('tone').value,
+        length: parseInt(document.getElementById('length').value, 10) || 800
+      };
+
+      const articleDiv = document.getElementById('article');
+      articleDiv.textContent = "Generating article...";
+
+      try {
+        const res = await fetch('http://127.0.0.1:8000/generate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          articleDiv.textContent = "Error: " + (err.detail || res.statusText);
+          return;
+        }
+
+        const data = await res.json();
+        articleDiv.textContent = data.article;
+      } catch (e) {
+        articleDiv.textContent = "Request failed: " + e;
+      }
+    };
+  </script>
+</body>
+</html>
