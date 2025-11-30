@@ -1,0 +1,45 @@
+# Python virtualenv
+venv/
+
+# Bytecode and caches
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Environment files
+.env
+.env.*
+
+# Editor directories and system files
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
+Thumbs.db
+
+# Keys, certificates, database files
+*.pem
+*.key
+*.crt
+*.p12
+*.jks
+*.db
+*.sqlite3
+
+# Logs and coverage
+*.log
+.coverage
+
+# OS generated files
+Desktop.ini
+
+# Others
+
+# End of file
