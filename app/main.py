@@ -7,6 +7,7 @@ from typing import Optional
 
 from .prompts import BASE_SYSTEM_PROMPT, ARTICLE_TEMPLATES
 from .llmclient import generate_article  # make sure filename is llmclient.py
+from .rag import search_context
 
 
 app = FastAPI(title="Soccer Article Generator")
@@ -59,9 +60,24 @@ def generate(payload: GenerateRequest):
         length=payload.length,
     )
 
+    query_parts = [
+        payload.article_type,
+        payload.home_team or "",
+        payload.away_team or "",
+        payload.team or "",
+        payload.player or "",
+        payload.competition or "",
+        payload.angle or "",
+    ]
+    retrieval_query = " ".join(p for p in query_parts if p)
+
+    chunks = search_context(retrieval_query, k=5) if retrieval_query else []
+    context_text = "\n\n---\n\n".join(c["text"] for c in chunks) if chunks else ""
+
     article_text = generate_article(
         system_prompt=BASE_SYSTEM_PROMPT,
         user_prompt=user_prompt,
+        context=context_text,
     )
 
     return GenerateResponse(article=article_text)

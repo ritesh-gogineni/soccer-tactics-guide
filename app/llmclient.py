@@ -1,6 +1,6 @@
-# app/llm_client.py
-
 import os
+from typing import Optional
+
 from dotenv import load_dotenv
 import google.generativeai as genai
 
@@ -18,15 +18,28 @@ genai.configure(api_key=api_key)
 MODEL_NAME = "gemini-2.5-flash"
 
 
-def generate_article(system_prompt: str, user_prompt: str) -> str:
+def generate_article(
+    system_prompt: str,
+    user_prompt: str,
+    context: Optional[str] = None,
+) -> str:
     """
     Call the Google Gemini model and return the article text.
-    We combine the system prompt and user prompt into a single prompt string.
+    We combine the system prompt, optional retrieved context, and user prompt
+    into a single prompt string.
     """
     model = genai.GenerativeModel(MODEL_NAME)
 
-    # Combine system and user prompts into one big prompt
-    full_prompt = system_prompt.strip() + "\n\n" + user_prompt.strip()
+    parts = [system_prompt.strip()]
+    if context:
+        parts.append(
+            "Here is background tactical context drawn from thefalse9.com. "
+            "Use it to inspire your analysis and style, but do not copy any "
+            "sentences verbatim:\n\n" + context.strip()
+        )
+    parts.append(user_prompt.strip())
+
+    full_prompt = "\n\n".join(parts)
 
     response = model.generate_content(full_prompt)
 
