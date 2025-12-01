@@ -144,35 +144,61 @@ def build_index_from_corpus(
     output_path: Optional[Path] = None,
 ) -> None:
     """
-    Utility to build an index file from a corpus of thefalse9 articles.
+    Utility to incrementally build/update an index file from a corpus of
+    thefalse9 articles.
 
     This is intended to be run offline (e.g., from a separate script).
     `corpus` should be a list of dicts:
       {"title": str, "url": str, "text": str}
-    The function writes a JSON file to `output_path` (or INDEX_PATH by default).
+    The function appends any new articles to the JSON file at `output_path`
+    (or INDEX_PATH by default). Existing URLs are not re-embedded, so each
+    article is processed only once.
     """
     target_path = output_path or INDEX_PATH
-    records = []
+    existing_records: List[Dict[str, Any]] = []
+    if target_path.exists():
+        try:
+            with target_path.open("r", encoding="utf-8") as f:
+                raw_index = json.load(f)
+                if isinstance(raw_index, list):
+                    existing_records = raw_index
+        except Exception as exc:
+            print(f"Warning: could not read existing index: {exc}")
+
+    existing_urls = {
+        item.get("url")
+        for item in existing_records
+        if isinstance(item, dict) and item.get("url")
+    }
+
+    new_records: List[Dict[str, Any]] = []
     for article in corpus:
         title = article.get("title", "")
         url = article.get("url", "")
         text = article.get("text", "")
         if not text:
             continue
+        if url and url in existing_urls:
+            continue
 
         emb = embed_text(text)
         norm = math.sqrt(sum(x * x for x in emb))
-        records.append(
-            {
-                "title": title,
-                "url": url,
-                "text": text,
-                "embedding": emb,
-                "norm": norm,
-            }
-        )
+        record = {
+            "title": title,
+            "url": url,
+            "text": text,
+            "embedding": emb,
+            "norm": norm,
+        }
+        new_records.append(record)
+        if url:
+            existing_urls.add(url)
 
+    if not new_records:
+        return
+
+    target_path.parent.mkdir(parents=True, exist_ok=True)
     target_path.write_text(
-        json.dumps(records, ensure_ascii=False, indent=2),
+        json.dumps(existing_records + new_records, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )

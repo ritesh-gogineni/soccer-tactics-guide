@@ -2,7 +2,7 @@ import json
 import time
 from dataclasses import dataclass, asdict
 from pathlib import Path
-from typing import List, Optional, Set
+from typing import Iterable, List, Optional, Set
 from urllib.parse import urljoin, urlparse
 
 import requests
@@ -20,6 +20,9 @@ BEGINNERS_CATEGORY_URL = (
 MAX_PAGES = 200
 REQUEST_DELAY_SECONDS = 2.0
 TIMEOUT = 10
+DEFAULT_ARTICLE_LIMIT = 15
+CORPUS_PATH = Path("thefalse9_corpus.json")
+CONFIG_PATH = Path("config.json")
 
 
 @dataclass
@@ -49,35 +52,124 @@ def extract_article_links(soup: BeautifulSoup) -> List[str]:
     return list(links)
 
 
+def _normalize_classes(value: Optional[Iterable[str] | str]) -> List[str]:
+    if not value:
+        return []
+    if isinstance(value, str):
+        return value.split()
+    return [cls for cls in value if cls]
+
+
+def _extract_text_from_node(node: BeautifulSoup) -> str:
+    paragraphs = [
+        p.get_text(" ", strip=True)
+        for p in node.find_all("p")
+    ]
+    return "\n\n".join(p for p in paragraphs if p)
+
+
 def extract_article_text(url: str, soup: BeautifulSoup) -> Article | None:
-    # Heuristic: many blogs wrap content in <article> or a div with "post" in the class.
     title_tag = soup.find("h1")
-    title = title_tag.get_text(strip=True) if title_tag else url
+    if not title_tag:
+        og_title = soup.find("meta", attrs={"property": "og:title"})
+        title = og_title["content"].strip() if og_title and og_title.get("content") else url
+    else:
+        title = title_tag.get_text(strip=True)
 
-    article_container = soup.find("article")
-    if article_container is None:
-        # Fallback: look for a div whose class name contains "post" or "entry".
-        article_container = soup.find(
-            "div",
-            class_=lambda c: c and ("post" in c or "entry" in c),
-        )
+    candidate_selectors = [
+        "[class*='entry-content']",
+        "[class*='post-content']",
+        "[class*='article-content']",
+        "[class*='post-body']",
+        "article",
+    ]
 
-    if article_container is None:
+    seen_nodes: Set[int] = set()
+    best_text = ""
+
+    keywords = ("entry", "post", "article")
+
+    for selector in candidate_selectors:
+        for node in soup.select(selector):
+            identifier = id(node)
+            if identifier in seen_nodes:
+                continue
+            seen_nodes.add(identifier)
+
+            classes = _normalize_classes(node.get("class"))
+            if selector == "article" and classes and not any(
+                keyword in cls for cls in classes for keyword in keywords
+            ):
+                # Skip generic <article> wrappers that aren't actual content.
+                continue
+
+            text = _extract_text_from_node(node)
+            if len(text) > len(best_text):
+                best_text = text
+
+    if not best_text.strip():
         return None
 
-    paragraphs = [p.get_text(" ", strip=True) for p in article_container.find_all("p")]
-    text = "\n\n".join(p for p in paragraphs if p)
-
-    if not text:
-        return None
-
-    return Article(title=title, url=url, text=text)
+    return Article(title=title or url, url=url, text=best_text.strip())
 
 
-def crawl(start_urls: List[str], restrict_prefix: Optional[str] = None) -> List[Article]:
+def load_config() -> tuple[str, int]:
+    crawllevel = "minimal"
+    article_limit = DEFAULT_ARTICLE_LIMIT
+    if CONFIG_PATH.exists():
+        try:
+            cfg = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+            level = str(cfg.get("crawllevel", "")).strip().lower()
+            if level in {"minimal", "full"}:
+                crawllevel = level
+
+            limit_val = cfg.get("max_articles_per_run")
+            if isinstance(limit_val, int) and limit_val > 0:
+                article_limit = limit_val
+        except Exception as exc:
+            print(f"Warning: failed to parse {CONFIG_PATH}: {exc}")
+
+    return crawllevel, article_limit
+
+
+def load_existing_corpus(path: Path) -> List[Article]:
+    if not path.exists():
+        return []
+
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        print(f"Warning: could not read existing corpus: {exc}")
+        return []
+
+    articles: List[Article] = []
+    items = raw if isinstance(raw, list) else []
+    for item in items:
+        url = item.get("url")
+        text = item.get("text")
+        if not url or not text:
+            continue
+        title = item.get("title") or url
+        articles.append(Article(title=title, url=url, text=text))
+    return articles
+
+
+def save_corpus(path: Path, articles: List[Article]) -> None:
+    payload = [asdict(article) for article in articles]
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def crawl(
+    start_urls: List[str],
+    restrict_prefix: Optional[str] = None,
+    *,
+    existing_urls: Optional[Set[str]] = None,
+    max_new_articles: Optional[int] = None,
+) -> List[Article]:
     to_visit: List[str] = list(start_urls)
     seen: Set[str] = set()
     articles: List[Article] = []
+    known_articles = set(existing_urls or set())
 
     while to_visit and len(seen) < MAX_PAGES:
         current = to_visit.pop(0)
@@ -100,8 +192,18 @@ def crawl(start_urls: List[str], restrict_prefix: Optional[str] = None) -> List[
         # Try to treat this page as an article.
         article = extract_article_text(current_url, soup)
         if article:
-            print(f"Captured article: {article.title!r}")
-            articles.append(article)
+            if article.url in known_articles:
+                print(f"Skipping already indexed article: {article.url}")
+            else:
+                print(f"Captured article: {article.title!r}")
+                articles.append(article)
+                known_articles.add(article.url)
+                if max_new_articles and len(articles) >= max_new_articles:
+                    print(
+                        f"Reached per-run article limit of {max_new_articles}. "
+                        "Stopping crawl."
+                    )
+                    break
 
         # Collect more links to follow.
         for href in extract_article_links(soup):
@@ -115,18 +217,7 @@ def crawl(start_urls: List[str], restrict_prefix: Optional[str] = None) -> List[
 
 
 def main() -> None:
-    # Read crawl level from config.json (crawllevel: "minimal" or "full")
-    config_path = Path("config.json")
-    crawllevel = "minimal"
-    if config_path.exists():
-        try:
-            cfg = json.loads(config_path.read_text(encoding="utf-8"))
-            level = str(cfg.get("crawllevel", "")).strip().lower()
-            if level in {"minimal", "full"}:
-                crawllevel = level
-        except Exception:
-            # Fall back to default if config is malformed.
-            pass
+    crawllevel, article_limit = load_config()
 
     if crawllevel == "minimal":
         # Start from the beginners category page but allow following article
@@ -143,24 +234,35 @@ def main() -> None:
         restrict_prefix = None
         print("Crawl level: full (entire site)")
 
+    existing_articles = load_existing_corpus(CORPUS_PATH)
+    if existing_articles:
+        print(f"Loaded {len(existing_articles)} existing articles from corpus.")
+
     print("Starting crawl of thefalse9.com")
-    articles = crawl(start_urls, restrict_prefix=restrict_prefix)
-    print(f"Collected {len(articles)} articles")
+    articles = crawl(
+        start_urls,
+        restrict_prefix=restrict_prefix,
+        existing_urls={article.url for article in existing_articles},
+        max_new_articles=article_limit,
+    )
+    print(f"Collected {len(articles)} new articles")
+
+    if not articles:
+        print("No new content found. Existing corpus and index remain unchanged.")
+        return
 
     # Save raw corpus for inspection.
-    corpus_path = "thefalse9_corpus.json"
-    corpus_data = [asdict(a) for a in articles]
-    with open(corpus_path, "w", encoding="utf-8") as f:
-        json.dump(corpus_data, f, ensure_ascii=False, indent=2)
-    print(f"Saved raw corpus to {corpus_path}")
+    combined_articles = existing_articles + articles
+    save_corpus(CORPUS_PATH, combined_articles)
+    print(f"Saved {len(combined_articles)} total articles to {CORPUS_PATH}")
 
     # Build the RAG index using your helper.
     corpus_for_index = [
         {"title": a.title, "url": a.url, "text": a.text} for a in articles
     ]
-    print("Building embedding index (this may take a while)...")
+    print("Updating embedding index with new content (this may take a while)...")
     build_index_from_corpus(corpus_for_index)
-    print("Index written to app/thefalse9_index.json")
+    print("Index updated at app/thefalse9_index.json")
 
 
 if __name__ == "__main__":

@@ -6,6 +6,8 @@ You write detailed, insightful, and original articles.
 You never invent obviously wrong facts about final scores or transfers.
 When facts are uncertain, you write in a cautious, speculative way.
 Use clear headings and short paragraphs.
+Use the latest news and tactical trends to inform your writing.
+For match previews, use the next fixture date.
 """
 
 ARTICLE_TEMPLATES = {

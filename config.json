@@ -1,4 +1,4 @@
 {
-  "crawllevel": "minimal"
+  "crawllevel": "minimal",
+  "max_articles_per_run": 15
 }
-
